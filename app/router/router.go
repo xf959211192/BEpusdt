@@ -59,6 +59,7 @@ func Handler() *gin.Engine {
 
 	{
 		staticInit(engine)
+		registerLocalHealth(engine)
 		epusdtInit(engine)
 		epayInit(engine)
 		adminInit(engine)

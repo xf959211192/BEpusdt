@@ -1,0 +1,67 @@
+name: 支付网关构建与回归
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payment-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOTOOLCHAIN: local
+      GOFLAGS: -trimpath
+      CGO_ENABLED: '0'
+      PAYMENT_VERSION: 1.24.2-main.d36d34f-reservation.3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache-dependency-path: go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.34.7'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 构建并嵌入管理页面
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web run build:prod
+          cp -R web/dist/. static/secure/
+          test -s static/secure/secure.html
+      - name: 编译与分批回归
+        run: |
+          mkdir -p dist-pay
+          go build -ldflags "-s -w -X github.com/v03413/bepusdt/app.Version=${PAYMENT_VERSION}" -o dist-pay/bepusdt ./main
+          timeout 60s go test -count=1 -timeout=45s ./app/model ./app/task ./app/task/notify ./app/router
+          timeout 60s go vet ./app/model ./app/task ./app/router
+      - name: 记录来源及文件校验值
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os
+          root=Path('dist-pay')
+          metadata={'repository':os.environ['GITHUB_REPOSITORY'],'fork_commit':os.environ['GITHUB_SHA'],'upstream':'v03413/BEpusdt','upstream_commit':'d36d34fe04725b5be121d2877f6251da9cc6089b','version':os.environ['PAYMENT_VERSION'],'tests':'passed'}
+          metadata['sha256']={'bepusdt':hashlib.sha256((root/'bepusdt').read_bytes()).hexdigest()}
+          (root/'build-metadata.json').write_text(json.dumps(metadata,indent=2))
+          PY
+          cd dist-pay
+          sha256sum bepusdt build-metadata.json > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bepusdt-linux-amd64
+          path: dist-pay/
+          if-no-files-found: error
+          retention-days: 30

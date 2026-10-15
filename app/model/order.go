@@ -393,9 +393,22 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 	if amount.LessThan(atom) { // 低于最小原子精度，从最小原子精度开始计算
 		amount = atom
 	}
+	// 预取本次报价附近的永久保留记录，避免每次重试都读取数据库。
+	var reservedAmounts []AmountReservation
+	addresses := make([]string, 0, len(wallets))
+	for _, wallet := range wallets {
+		addresses = append(addresses, wallet.GetMatchAddr())
+	}
+	if err := Db.Where("trade_type = ? AND address IN ? AND CAST(amount AS NUMERIC) >= ? AND CAST(amount AS NUMERIC) <= ?",
+		p.TradeType, addresses, amount.String(), amount.Add(atom.Mul(decimal.NewFromInt(amountReservationMaxSteps))).String()).Find(&reservedAmounts).Error; err != nil {
+		return Wallet{}, "", fmt.Errorf("读取金额保留记录失败：%w", err)
+	}
+	for _, reservation := range reservedAmounts {
+		lock[reservation.Address+reservation.Amount] = true
+	}
 
 	var i = 0
-	var m = 100
+	var m = amountReservationMaxSteps
 	for {
 		for _, w := range wallets {
 			k := w.GetMatchAddr() + amount.String()
@@ -403,7 +416,14 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 				continue
 			}
 
-			return w, amount.String(), nil
+			// 已展示给顾客的金额永久保留，订单过期或被清理也不能复用。
+			reserved, err := reserveAmount(w, p.TradeType, amount.String())
+			if err != nil {
+				return Wallet{}, "", fmt.Errorf("保存金额保留记录失败：%w", err)
+			}
+			if reserved {
+				return w, amount.String(), nil
+			}
 		}
 
 		// 已经被占用，每次递增一个原子精度
