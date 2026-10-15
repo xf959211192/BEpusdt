@@ -20,7 +20,7 @@ jobs:
       GOTOOLCHAIN: local
       GOFLAGS: -trimpath
       CGO_ENABLED: '0'
-      PAYMENT_VERSION: 1.24.2-main.d36d34f-reservation.3
+      PAYMENT_VERSION: 1.24.2-main.d36d34f-reservation.4
     steps:
       - uses: actions/checkout@v4
         with:

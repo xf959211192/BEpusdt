@@ -3,11 +3,13 @@ package task
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -317,7 +319,25 @@ func (e *evm) parseNativeTransfer(array []gjson.Result, num int, timestamp time.
 
 func (e *evm) parseEventTransfer(b evmBlock, timestamp map[string]time.Time) ([]transfer, error) {
 	transfers := make([]transfer, 0)
-	post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"fromBlock":"0x%x","toBlock":"0x%x","topics":["%s"]}],"id":1}`, b.From, b.To, evmTransferEvent))
+	// 只查询当前网络支持的代币合约，避免全链事件请求被公共节点拒绝。
+	contracts := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, trade := range model.GetAllTradeConfig() {
+		contract := strings.ToLower(trade.Contract)
+		if string(trade.Network) == e.Network && strings.HasPrefix(contract, "0x") && !seen[contract] {
+			seen[contract] = true
+			contracts = append(contracts, contract)
+		}
+	}
+	if len(contracts) == 0 {
+		return transfers, nil
+	}
+	sort.Strings(contracts)
+	filter := map[string]interface{}{"fromBlock": fmt.Sprintf("0x%x", b.From), "toBlock": fmt.Sprintf("0x%x", b.To), "address": contracts, "topics": []string{evmTransferEvent}}
+	post, err := json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "method": "eth_getLogs", "params": []interface{}{filter}, "id": 1})
+	if err != nil {
+		return transfers, err
+	}
 	resp, err := e.Client.Post(e.rpcEndpoint(), "application/json", bytes.NewBuffer(post))
 	if err != nil {
 
