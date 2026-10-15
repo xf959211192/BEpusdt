@@ -230,8 +230,6 @@ func (e *evm) getBlockByNumber(a any) {
 		return
 	}
 
-	conf.RecordSuccess(e.Network, cast.ToString(b.To))
-
 	nativeTransfers := make([]transfer, 0)
 	blockTimestamp := make(map[string]time.Time)
 	for _, itm := range gjson.ParseBytes(body).Array() {
@@ -271,6 +269,8 @@ func (e *evm) getBlockByNumber(a any) {
 		transferQueue.In <- transfers
 	}
 
+	// 事件日志也成功读取后才报告进度，避免节点拒绝日志时显示为正常扫描。
+	conf.RecordSuccess(e.Network, cast.ToString(b.To))
 	log.Task.Info(fmt.Sprintf("区块扫描完成(%s): %d → %d 成功率：%s", e.Network, b.From, b.To, conf.GetSuccessRate(e.Network)))
 }
 
